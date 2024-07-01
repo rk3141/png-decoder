@@ -1,0 +1,5 @@
+zig-out
+.zig-cache
+test-0.png
+test-1.png
+test-2.png
