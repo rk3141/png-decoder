@@ -7,15 +7,16 @@ pub fn main() !void {
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
 
-    const file = try std.fs.cwd().openFile("test.png", .{});
+    // const file = try std.fs.cwd().openFile("test.png", .{});
 
-    const freader = file.reader();
+    // const freader = file.reader();
 
-    var buf_reader = std.io.bufferedReader(freader);
+    // var buf_reader = std.io.bufferedReader(freader);
 
-    var image = try png.Image.init(allocator, buf_reader.reader().any());
+    var image = try png.Image.from_file(allocator, "test.png");
     defer image.deinit();
 
     try image.read();
-    std.debug.print("{any}", .{image.raw_reconstruced_image});
+    std.debug.print("{any}\n", .{image.raw_reconstruced_image});
+    std.debug.print("w: {}, h: {}\n", .{ image.width, image.height });
 }

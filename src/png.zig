@@ -26,12 +26,36 @@ fn paeth_predictor(a: u8, b: u8, c: u8) u8 {
     const pc = @abs(p -% c);
     return if (pa <= pb and pa <= pc) a else if (pb <= pc) b else c;
 }
+const ColorType = enum(u8) {
+    Grayscale = 0,
+    RGB = 2,
+    Pallete = 3, // PLTE
+    GrayAlpha = 4,
+    RGBA = 6,
+
+    fn bytesPerPixel(self: ColorType) !u8 {
+        return switch (self) {
+            .RGB => 3,
+            .GrayAlpha => 2,
+            .RGBA => 4,
+            else => return error.NonSupportedColorType,
+        };
+    }
+
+    fn is_bitdepth_ok(self: ColorType, bitdepth: u8) bool {
+        return switch (self) {
+            .Grayscale => (bitdepth == 1 or bitdepth == 2 or bitdepth == 4 or bitdepth == 8 or bitdepth == 16),
+            .Pallete => (bitdepth == 1 or bitdepth == 2 or bitdepth == 4 or bitdepth == 8),
+            .RGB, .GrayAlpha, .RGBA => (bitdepth == 8 or bitdepth == 16),
+        };
+    }
+};
 
 pub const Image = struct {
     width: u32 = 0,
     height: u32 = 0,
     bitdepth: u8 = 0,
-    color_type: u8 = 0,
+    color_type: ColorType = ColorType.Grayscale,
     compression_method: u8 = 0,
     filter_method: u8 = 0, // 0 stands for standard
     interlace_method: u8 = 0,
@@ -102,12 +126,8 @@ pub const Image = struct {
 
                 try std.compress.zlib.decompress(idat_reader, deflated_idat.writer());
 
-                const bytesPerPixel: usize = switch (self.color_type) {
-                    2 => 3,
-                    4 => 2,
-                    6 => 4,
-                    else => return error.NonSupportedColorType,
-                };
+                const bytesPerPixel: usize = try self.color_type.bytesPerPixel();
+
                 const stride = self.width * bytesPerPixel;
 
                 var reconstucted_pixel_data = try self.allocator.alloc(u8, self.height * stride);
@@ -119,7 +139,7 @@ pub const Image = struct {
                     index += 1;
                     for (0..stride) |i| {
                         // i + j * stride represents the postion of the byte in the 1D arr in terms of i, j
-                        const filter_byte: u9 = deflated_idat.items[index];
+                        const filtered_byte: u9 = deflated_idat.items[index];
                         index += 1;
 
                         const a: u8 = if (i >= bytesPerPixel)
@@ -133,11 +153,11 @@ pub const Image = struct {
                             0;
 
                         const true_byte: u8 = @intCast(switch (filter_type) {
-                            .None => filter_byte,
-                            .Sub => filter_byte + a,
-                            .Up => filter_byte + b,
-                            .Average => filter_byte + @divFloor(@as(u32, @intCast(a)) + b, 2),
-                            .Paeth => filter_byte + paeth_predictor(a, b, c),
+                            .None => filtered_byte,
+                            .Sub => filtered_byte + a,
+                            .Up => filtered_byte + b,
+                            .Average => filtered_byte + @divFloor(@as(u32, @intCast(a)) + b, 2),
+                            .Paeth => filtered_byte + paeth_predictor(a, b, c),
                             else => {
                                 std.debug.print("{any}\n", .{filter_type});
                                 return error.UnknownFilterMethod;
@@ -157,7 +177,7 @@ pub const Image = struct {
                 self.height = std.mem.readInt(u32, &height, .big); // height of the image
                 self.bitdepth = curr_chunk.chunk_data[8];
                 // TODO: PLTE Chunk required for color type = 3; does not check currently
-                self.color_type = curr_chunk.chunk_data[9];
+                self.color_type = @enumFromInt(curr_chunk.chunk_data[9]);
                 self.compression_method = curr_chunk.chunk_data[10];
                 self.filter_method = curr_chunk.chunk_data[11];
                 self.interlace_method = curr_chunk.chunk_data[12];
@@ -169,18 +189,21 @@ pub const Image = struct {
                     return error.UnkownCompressionMethod;
                 }
 
-                const is_bit_depth_ok = switch (self.color_type) {
-                    0 => (self.bitdepth == 1 or self.bitdepth == 2 or self.bitdepth == 4 or self.bitdepth == 8 or self.bitdepth == 16),
-                    2, 4, 6 => (self.bitdepth == 8 or self.bitdepth == 16),
-                    3 => (self.bitdepth == 1 or self.bitdepth == 2 or self.bitdepth == 4 or self.bitdepth == 8),
-                    else => false,
-                };
-
-                if (!is_bit_depth_ok) {
-                    std.debug.print("The files corrupted cuz the bitdepths all messed up; color type: {}, bitdepth: {}\n", .{ self.color_type, self.bitdepth });
+                if (!self.color_type.is_bitdepth_ok(self.bitdepth)) {
+                    std.debug.print("The files corrupted cuz the bitdepths all messed up; color type: {any}, bitdepth: {}\n", .{ self.color_type, self.bitdepth });
                     return error.WrongBitdepth;
                 }
             }
         }
+    }
+
+    pub fn from_file(allocator: std.mem.Allocator, file_name: []const u8) !Self {
+        const file = try std.fs.cwd().openFile(file_name, .{});
+
+        const freader = file.reader();
+
+        var buf_reader = std.io.bufferedReader(freader);
+
+        return try Self.init(allocator, buf_reader.reader().any());
     }
 };
