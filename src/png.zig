@@ -26,7 +26,7 @@ fn paeth_predictor(a: u8, b: u8, c: u8) u8 {
     const pc = @abs(p -% c);
     return if (pa <= pb and pa <= pc) a else if (pb <= pc) b else c;
 }
-const ColorType = enum(u8) {
+pub const ColorType = enum(u8) {
     Grayscale = 0,
     RGB = 2,
     Pallete = 3, // PLTE
@@ -51,6 +51,59 @@ const ColorType = enum(u8) {
     }
 };
 
+pub const Color = struct {
+    r: u8,
+    g: u8,
+    b: u8,
+    a: u8,
+
+    pub fn from_raw(allocator: std.mem.Allocator, raw: []u8, color_type: ColorType) ![]Color {
+        const bpp = try color_type.bytesPerPixel();
+        const array_size = @divFloor(raw.len, bpp);
+        var color_arr = try allocator.alloc(Color, array_size);
+        var i: usize = 0;
+        var index: usize = 0;
+        while (i < raw.len) : (i += bpp) {
+            var r: u8 = undefined;
+            var g: u8 = undefined;
+            var b: u8 = undefined;
+            var a: u8 = undefined;
+            switch (color_type) {
+                .RGB => {
+                    r = raw[i];
+                    g = raw[i + 1];
+                    b = raw[i + 2];
+                    a = 255;
+                },
+                .RGBA => {
+                    r = raw[i];
+                    g = raw[i + 1];
+                    b = raw[i + 2];
+                    a = raw[i + 3];
+                },
+                .GrayAlpha => {
+                    r = raw[i];
+                    g = raw[i];
+                    b = raw[i];
+                    a = raw[i + 1];
+                },
+                else => {
+                    return error.NonSupportedColorType;
+                },
+            }
+
+            color_arr[index] = .{
+                .r = r,
+                .g = g,
+                .b = b,
+                .a = a,
+            };
+            index += 1;
+        }
+        return color_arr;
+    }
+};
+
 pub const Image = struct {
     width: u32 = 0,
     height: u32 = 0,
@@ -64,7 +117,7 @@ pub const Image = struct {
     reader: std.io.AnyReader,
 
     idat: std.ArrayList(u8),
-    raw_reconstruced_image: []u8 = undefined,
+    pixels: []Color = undefined,
 
     const Self = @This();
 
@@ -81,7 +134,7 @@ pub const Image = struct {
 
     pub fn deinit(self: *Self) void {
         self.idat.deinit();
-        self.allocator.free(self.raw_reconstruced_image);
+        self.allocator.free(self.pixels);
     }
 
     fn read_chunk(self: *Self) !PNG_Chunk {
@@ -130,8 +183,8 @@ pub const Image = struct {
 
                 const stride = self.width * bytesPerPixel;
 
-                var reconstucted_pixel_data = try self.allocator.alloc(u8, self.height * stride);
-                // self.allocator.free(reconstucted_pixel_data); FREED in deinit
+                var reconstructed_pixel_data = try self.allocator.alloc(u8, self.height * stride);
+                defer self.allocator.free(reconstructed_pixel_data);
 
                 var index: usize = 0;
                 for (0..self.height) |j| {
@@ -143,12 +196,12 @@ pub const Image = struct {
                         index += 1;
 
                         const a: u8 = if (i >= bytesPerPixel)
-                            reconstucted_pixel_data[i + j * stride - bytesPerPixel]
+                            reconstructed_pixel_data[i + j * stride - bytesPerPixel]
                         else
                             0;
-                        const b: u8 = if (j > 0) reconstucted_pixel_data[i + (j - 1) * stride] else 0;
+                        const b: u8 = if (j > 0) reconstructed_pixel_data[i + (j - 1) * stride] else 0;
                         const c: u8 = if (i >= bytesPerPixel and j > 0)
-                            reconstucted_pixel_data[i + (j - 1) * stride - bytesPerPixel]
+                            reconstructed_pixel_data[i + (j - 1) * stride - bytesPerPixel]
                         else
                             0;
 
@@ -163,10 +216,12 @@ pub const Image = struct {
                                 return error.UnknownFilterMethod;
                             },
                         } & 0xff);
-                        reconstucted_pixel_data[i + j * stride] = true_byte;
+                        reconstructed_pixel_data[i + j * stride] = true_byte;
                     }
                 }
-                self.raw_reconstruced_image = reconstucted_pixel_data;
+
+                self.pixels = try Color.from_raw(self.allocator, reconstructed_pixel_data, self.color_type);
+
                 break;
             } else if (curr_chunk.is_img_data()) {
                 try self.idat.appendSlice(curr_chunk.chunk_data);

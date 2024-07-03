@@ -11,6 +11,7 @@ pub fn main() !void {
     defer image.deinit();
 
     try image.read();
-    std.debug.print("{any}\n", .{image.raw_reconstruced_image});
+    std.debug.print("{any}\n", .{image.pixels});
+
     std.debug.print("w: {}, h: {}\n", .{ image.width, image.height });
 }
