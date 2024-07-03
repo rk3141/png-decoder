@@ -261,4 +261,12 @@ pub const Image = struct {
 
         return try Self.init(allocator, buf_reader.reader().any());
     }
+
+    pub fn get(self: Self, i: usize, j: usize) Color {
+        return self.pixels[i + j * self.height];
+    }
+
+    pub fn set(self: Self, i: usize, j: usize, color: Color) void {
+        self.pixels[i + j * self.height] = color;
+    }
 };
